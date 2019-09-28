@@ -136,7 +136,7 @@ namespace ICPBabySitter
                 {
                     case "-E":
                         // Check fax for receipt
-                        setupEWS();
+                        SetupEWS();
                         ExtractLinks();
                         break;
                     /*
@@ -158,7 +158,7 @@ namespace ICPBabySitter
             }
         }
 
-        private static void setupEWS()
+        private static void SetupEWS()
         {
             //Add your certificate validation callback method to the ServicePointManager by adding 
             //the following code to the beginning of the Main(string[] args) method. 
@@ -173,8 +173,6 @@ namespace ICPBabySitter
             //service.UseDefaultCredentials = true;
 
             //service.Credentials = new NetworkCredential("username", "password", "CORP"); ;
-            string landId = ConfigurationManager.AppSettings["client_email"];
-            string lanPwd = ConfigurationManager.AppSettings["client_key"];
             /*
                         SecureString lanPwd = new SecureString();
                         lanPwd.AppendChar('p');
@@ -182,7 +180,7 @@ namespace ICPBabySitter
                         lanPwd.AppendChar('d');
             */
             //SecureString lanPwd = new SecureString("password", 8);
-            service.Credentials = new NetworkCredential(landId, lanPwd, "CORP");
+            service.Credentials = new NetworkCredential(ConfigurationManager.AppSettings["ews_user"], ConfigurationManager.AppSettings["ews_pwd"], "CORP");
 
             //The AutodiscoverUrl method on the ExchangeService object performs a call to the Autodiscover service 
             //to get the service URL. If this call is successful, the URL property on the ExchangeService object 
