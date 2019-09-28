@@ -12,28 +12,26 @@ using Microsoft.Exchange.WebServices.Data;
 using mshtml;
 using System.Security;
 
-namespace ICPExtractRegLinks
+namespace ICPBabySitter
 {
     class ICPUser
     {
         private string m_userid;
         private string m_email;
         private string m_link;
-        private int m_valid;
-        private EmailMessage m_emailmsg;
+        private Boolean m_found;        
 
         public ICPUser(EmailMessage email)
-        {
-            m_emailmsg = email;
-            m_valid = ExtractRegistrationLink(email);
+        {            
+            m_found = ExtractRegistrationLink(email);
         }
 
-        public Boolean IsValid()
+        public Boolean IsFound()
         {
-            return (m_valid == 1);
+            return m_found;
         }
 
-        private int ExtractRegistrationLink(EmailMessage email)
+        private Boolean ExtractRegistrationLink(EmailMessage email)
         {
             string body;            
 
@@ -82,86 +80,50 @@ namespace ICPExtractRegLinks
                     m_userid = screenEle.value;
                     m_email = emailEle.value;
                     m_link = link;                                       
-                    return 1;
+                    return true;
                 }
             }
-            return 0;
+            return false;
         }
 
-        public void CreateDBRecord(SqlConnection objConn)
+        public Boolean Save2DB(SqlConnection objConn)
         {
-            SqlCommand objCommand = new SqlCommand("create_user", objConn);
-            objCommand.CommandType = CommandType.StoredProcedure;
-            objCommand.CommandTimeout = 60;
-
-            objCommand.Parameters.Add("@userid", SqlDbType.VarChar, 20).Value = m_userid;
-            objCommand.Parameters.Add("@email", SqlDbType.VarChar, 50).Value = m_email;
-            objCommand.Parameters.Add("@link", SqlDbType.VarChar, 150).Value = m_link;
-
-            //inboxFolder.Items[i].GetInspector.Close(Outlook.OlInspectorClose.olDiscard);
-
             try
             {
+                SqlCommand objCommand = new SqlCommand("create_user", objConn);
+                objCommand.CommandType = CommandType.StoredProcedure;
+                objCommand.CommandTimeout = 60;
 
-                objConn.Open();
+                objCommand.Parameters.Add("@userid", SqlDbType.VarChar, 20).Value = m_userid;
+                objCommand.Parameters.Add("@email", SqlDbType.VarChar, 50).Value = m_email;
+                objCommand.Parameters.Add("@link", SqlDbType.VarChar, 150).Value = m_link;
 
-                int numberOfRecords = (int)objCommand.ExecuteScalar();
+                //inboxFolder.Items[i].GetInspector.Close(Outlook.OlInspectorClose.olDiscard);
 
-                objConn.Close();
-
-                if (numberOfRecords == 1)
+                if ((int)objCommand.ExecuteScalar() == 1)
+                    Console.WriteLine(DateTime.Now.ToString() + " INFO  Record saved: " + m_userid + ".");
+                else
                 {
-                    if (ConfigurationManager.AppSettings["debug_mode"] == "N")
-                        m_emailmsg.IsRead = true;
-                    item.Update(ConflictResolutionMode.AutoResolve);
-                    Console.WriteLine(DateTime.Now.ToString() + ": Fax Subject - " + item.Subject + " SENT.");
+                    Console.WriteLine(DateTime.Now.ToString() + " ERROR Error saving record: " + m_userid + ".");
+                    return false;
                 }
-
             }
             catch (Exception ex)
             {
-                objConn.Close();
-                Console.WriteLine(DateTime.Now.ToString() + ": CheckFax failed.");
-                Console.WriteLine(ex.Message);
+                Console.WriteLine(DateTime.Now.ToString() + " ERROR " + ex.Message);
+                return false;
             }
+            return true;
         }
 
     }
-
-    class UserLink
-    {
-        private string m_userid;
-        private string m_email;
-        private string m_link;
-
-        private void SetUserLink(string userid, string email, string link)
-        {
-            m_userid = userid;
-            m_email = email;
-            m_link = link;
-        }
-
-    }
-    
+ 
     class ICPBabySitter
     {
         static ExchangeService service;
 
-        private static string m_userid;
-        private static string m_email;
-        private static string m_link;
-
-        private static void SetUser(string userid, string email, string link)
-        {
-            m_userid = userid;
-            m_email = email;
-            m_link = link;
-        }
-
         static void Main(string[] args)
         {
-            int start = 0;
-
             if (args.Length == 0)
             {
                 PrintUsage();
@@ -172,10 +134,10 @@ namespace ICPExtractRegLinks
             {
                 switch (arg.Substring(0, 2).ToUpper())
                 {
-                    case "-C":
+                    case "-E":
                         // Check fax for receipt
                         setupEWS();
-                        CheckFax();
+                        ExtractLinks();
                         break;
                     /*
                     case "-S":
@@ -235,169 +197,72 @@ namespace ICPExtractRegLinks
             //service.ImpersonatedUserId = new ImpersonatedUserId(ConnectingIdType.SmtpAddress, "hasdevsa@ho.ha.org.hk");
 
         }
-
-        //execute every 3 minutes
-        private static int CheckFax()
+        
+        private static int ExtractLinks()
         {
-            PostItem postItem;
+            //PostItem postItem;
             EmailMessage emailMessage;
-            String emailEntityId = "";
+            //String emailEntityId = "";
             int offset = 0;
+            SqlConnection objConn = null;
 
             //Bind to Inbox folder
             Folder inboxfolder = Folder.Bind(service, WellKnownFolderName.Inbox);
-
-            //Console.WriteLine("The " + inboxfolder.DisplayName + " has " + inboxfolder.ChildFolderCount + " child folders.");
-            //Console.WriteLine("The " + inboxfolder.DisplayName + " has " + inboxfolder.TotalCount + " items.");
-            
-            //Retrieve first xx emails items
+          
+            //Retrieve first n emails items
             FindItemsResults<Item> findResults = service.FindItems(
                WellKnownFolderName.Inbox,
                new ItemView(Convert.ToInt32(ConfigurationManager.AppSettings["num_of_email"]), offset));
 
-
-            Console.WriteLine("Limited to process  " + findResults.Items.Count.ToString() + " email(s).");
-            //service.LoadPropertiesForItems(findResults.Items, PropertySet.FirstClassProperties);
-            foreach (Item item in findResults.Items)
+            //Open DB connection
+            if (findResults.TotalCount > 0)
             {
-                if (item.ItemClass == "IPM.Note")
+                try
+                {
+                    objConn = new SqlConnection(ConfigurationManager.ConnectionStrings["ICPConn"].ConnectionString);
+                    objConn.Open();
+                }
+                catch (Exception ex)
                 {                    
-                    emailMessage = (EmailMessage)item;
-                    //Console.WriteLine("IsRead: " + emailMessage.IsRead);
+                    Console.WriteLine(DateTime.Now.ToString() + " ERROR " + ex.Message);
+                    return -1;
+                }
 
-                    //perform other actions here...
+                Console.WriteLine("Limited to process  " + findResults.Items.Count.ToString() + " email(s).");
+                //service.LoadPropertiesForItems(findResults.Items, PropertySet.FirstClassProperties);
+                foreach (Item item in findResults.Items)
+                {
+                    if (item.ItemClass == "IPM.Note")
+                    {                    
+                        emailMessage = (EmailMessage)item;
+                        //Console.WriteLine("IsRead: " + emailMessage.IsRead);
 
-                    if (!emailMessage.IsRead)
-                    {                        
-                        //item.Load();
-                        //emailEntityId = ConvertEWSidToEntryID(service, item.Id.ToString(), ConfigurationManager.AppSettings["client_email"]);                        
+                        //perform other actions here...
+                        if (!emailMessage.IsRead)
+                        {                        
+                            //item.Load();
+                            //emailEntityId = ConvertEWSidToEntryID(service, item.Id.ToString(), ConfigurationManager.AppSettings["client_email"]);                        
 
-                        emailMessage.Load();
+                            emailMessage.Load();
 
-                        ICPUser icpuser = new ICPUser(emailMessage);
+                            ICPUser icpuser = new ICPUser(emailMessage);
 
-                        //if (ExtractRegistrationLink(emailMessage) > 0) {
-                        if (icpuser.IsValid())
-                        {
-                            using (SqlConnection objConn = new SqlConnection(ConfigurationManager.ConnectionStrings["ICPConn"].ConnectionString))
-                            {
-                                SqlCommand objCommand = new SqlCommand("create_user", objConn);
-                                objCommand.CommandType = CommandType.StoredProcedure;
-                                objCommand.CommandTimeout = 60;
-
-                                objCommand.Parameters.Add("@userid", SqlDbType.VarChar, 20).Value = m_userid;
-                                objCommand.Parameters.Add("@email", SqlDbType.VarChar, 50).Value = m_email;
-                                objCommand.Parameters.Add("@link", SqlDbType.VarChar, 150).Value = m_link;
-
-                                //inboxFolder.Items[i].GetInspector.Close(Outlook.OlInspectorClose.olDiscard);
-
-
-                                try
-                                {
-
-                                    objConn.Open();
-
-                                    int numberOfRecords = (int)objCommand.ExecuteScalar();
-
-                                    objConn.Close();
-
-                                    if (numberOfRecords == 1)
-                                    {
-                                        if (ConfigurationManager.AppSettings["debug_mode"] == "N")
-                                            emailMessage.IsRead = true;
-                                        item.Update(ConflictResolutionMode.AutoResolve);
-                                        Console.WriteLine(DateTime.Now.ToString() + ": Fax Subject - " + item.Subject + " SENT.");
-                                    }
-
+                            //if (ExtractRegistrationLink(emailMessage) > 0) {
+                            if (icpuser.IsFound())
+                            {                                
+                                if (icpuser.Save2DB(objConn))
+                                { 
+                                    //mark the message as read
+                                    emailMessage.IsRead = true;
+                                    item.Update(ConflictResolutionMode.AutoResolve);
                                 }
-                                catch (Exception ex)
-                                {                                    
-                                    objConn.Close();
-                                    Console.WriteLine(DateTime.Now.ToString() + ": CheckFax failed.");
-                                    Console.WriteLine(ex.Message);
-                                }
-                            }
+                            }                        
                         }
-                        
-                        //debug
-                        /*
-                        if (ConfigurationManager.AppSettings["debug_mode"] == "Y")
-                        {
-                            Console.WriteLine("Sender: " + emailMessage.Sender.Name);
-                            Console.WriteLine("Subject: " + item.Subject);
-                            Console.WriteLine("Id: " + item.Id);
-                            Console.WriteLine("ItemClass: " + item.ItemClass);
-                            Console.WriteLine("EntityId: " + emailEntityId);
-                            Console.WriteLine("IsRead: " + emailMessage.IsRead);                            
-                        }
-                        */
                     }
                 }
-                //for other ItemClass
-                else
-                {
-                    //perform other actions here...
+                if (objConn.State == ConnectionState.Open)
+                    objConn.Close();
                 }
-            }
-            return 0;
-        }
-
-        private static int XXXExtractRegistrationLink(EmailMessage email)
-        {
-            string body;
-
-            if (ConfigurationManager.AppSettings["debug_mode"] == "Y")
-                Console.WriteLine("DEBUG  " + email.Subject.ToString());
-
-            if (email.Subject.IndexOf("been invited to join HA Innovation Collaboration Platform") > 0)
-            {
-                body = email.Body;
-                //Console.WriteLine(body);
-                
-                int linkStart = body.LastIndexOf("https://");
-                int linkEnd = body.LastIndexOf("</a>");
-
-                string link = body.Substring(linkStart, linkEnd - linkStart);
-
-  //              Console.WriteLine(link);
-                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(link);
-                request.Method = "GET";
-/*
-                IWebProxy proxy = request.Proxy;
-                // Print the Proxy Url to the console.
-                if (proxy != null)
-                {
-                    Console.WriteLine("Proxy: {0}", proxy.GetProxy(request.RequestUri));
-                }
-                else
-                {
-                    Console.WriteLine("Proxy is null; no proxy will be used");
-                }
-*/
-                HttpWebResponse response = (HttpWebResponse)request.GetResponse();
-                using (System.IO.StreamReader reader = new System.IO.StreamReader(response.GetResponseStream()))
-                {
-                    string sPage = reader.ReadToEnd();
-                    // Process the response text if you need to...                                        
-                    object[] oPageText = { sPage };
-
-                    HTMLDocument doc = new HTMLDocument();
-                    IHTMLDocument2 doc2 = (IHTMLDocument2) doc;
-                    doc2.write(oPageText);
-
-                    HTMLInputElement screenEle = (HTMLInputElement) doc.getElementById("b_register_screen_name");
-                    HTMLInputElement emailEle = (HTMLInputElement) doc.getElementById("b_register_email");
-                    
-                    Console.WriteLine(screenEle.value + "," + emailEle.value + "," + link);
-                    SetUser(screenEle.value, emailEle.value, link);
-                    return 1;
-                    //b_register_screen_name
-                    //b_register_email            
-                    //Console.WriteLine(doc.getElementById("b_register_screen_name"));
-                    //Console.WriteLine(doc.getElementById("b_register_email"));
-                }                
-            }
             return 0;
         }
 
