@@ -19,26 +19,28 @@ namespace ICPBabySitter
         private string m_userid;
         private string m_email;
         private string m_link;
-        private Boolean m_found;        
+        private bool m_found;
+        private readonly string m_filtersubject = "been invited to join HA Innovation Collaboration Platform";
 
+        //constructor
         public ICPUser(EmailMessage email)
         {            
             m_found = ExtractRegistrationLink(email);
         }
 
-        public Boolean IsFound()
+        public bool IsFound()
         {
             return m_found;
         }
 
-        private Boolean ExtractRegistrationLink(EmailMessage email)
+        private bool ExtractRegistrationLink(EmailMessage email)
         {
-            string body;            
+            string body;
 
             if (ConfigurationManager.AppSettings["debug_mode"] == "Y")
-                Console.WriteLine("DEBUG  " + email.Subject.ToString());
+                Console.WriteLine(DateTime.Now.ToString() + " DEBUG  " + email.Subject.ToString());
 
-            if (email.Subject.IndexOf("been invited to join HA Innovation Collaboration Platform") > 0)
+            if (email.Subject.IndexOf(m_filtersubject) > 0)
             {
                 body = email.Body;                
 
@@ -76,7 +78,9 @@ namespace ICPBabySitter
                     HTMLInputElement screenEle = (HTMLInputElement)doc.getElementById("b_register_screen_name");
                     HTMLInputElement emailEle = (HTMLInputElement)doc.getElementById("b_register_email");
 
-                    Console.WriteLine(screenEle.value + "," + emailEle.value + "," + link);
+                    if (ConfigurationManager.AppSettings["debug_mode"] == "Y")
+                        Console.WriteLine(DateTime.Now.ToString() + " DEBUG " + screenEle.value + "," + emailEle.value + "," + link);
+
                     m_userid = screenEle.value;
                     m_email = emailEle.value;
                     m_link = link;                                       
@@ -86,7 +90,7 @@ namespace ICPBabySitter
             return false;
         }
 
-        public Boolean Save2DB(SqlConnection objConn)
+        public bool Save2DB(SqlConnection objConn)
         {
             try
             {
@@ -100,9 +104,7 @@ namespace ICPBabySitter
 
                 //inboxFolder.Items[i].GetInspector.Close(Outlook.OlInspectorClose.olDiscard);
 
-                if ((int)objCommand.ExecuteScalar() == 1)
-                    Console.WriteLine(DateTime.Now.ToString() + " INFO  Record saved: " + m_userid + ".");
-                else
+                if ((int)objCommand.ExecuteScalar() != 1)
                 {
                     Console.WriteLine(DateTime.Now.ToString() + " ERROR Error saving record: " + m_userid + ".");
                     return false;
@@ -201,43 +203,45 @@ namespace ICPBabySitter
             //PostItem postItem;
             EmailMessage emailMessage;
             //String emailEntityId = "";
-            int offset = 0;
+            int pageSize, offset = 0;
+            int total = 0;
             SqlConnection objConn = null;
+
+            //Open DB connection
+            try
+            {
+                objConn = new SqlConnection(ConfigurationManager.ConnectionStrings["ICPConn"].ConnectionString);
+                objConn.Open();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(DateTime.Now.ToString() + " ERROR " + ex.Message);
+                return -1;
+            }
+            //Console.WriteLine("Limited to process  " + findResults.Items.Count.ToString() + " email(s).");
+            pageSize = Convert.ToInt32(ConfigurationManager.AppSettings["num_of_email"]);
 
             //Bind to Inbox folder
             Folder inboxfolder = Folder.Bind(service, WellKnownFolderName.Inbox);
-          
+
             //Retrieve first n emails items
-            FindItemsResults<Item> findResults = service.FindItems(
-               WellKnownFolderName.Inbox,
-               new ItemView(Convert.ToInt32(ConfigurationManager.AppSettings["num_of_email"]), offset));
+            FindItemsResults<Item> findResults;
 
-            //Open DB connection
-            if (findResults.TotalCount > 0)
+            do
             {
-                try
-                {
-                    objConn = new SqlConnection(ConfigurationManager.ConnectionStrings["ICPConn"].ConnectionString);
-                    objConn.Open();
-                }
-                catch (Exception ex)
-                {                    
-                    Console.WriteLine(DateTime.Now.ToString() + " ERROR " + ex.Message);
-                    return -1;
-                }
+                findResults = service.FindItems(WellKnownFolderName.Inbox, new ItemView(pageSize, offset));
 
-                Console.WriteLine("Limited to process  " + findResults.Items.Count.ToString() + " email(s).");
                 //service.LoadPropertiesForItems(findResults.Items, PropertySet.FirstClassProperties);
                 foreach (Item item in findResults.Items)
                 {
                     if (item.ItemClass == "IPM.Note")
-                    {                    
+                    {
                         emailMessage = (EmailMessage)item;
                         //Console.WriteLine("IsRead: " + emailMessage.IsRead);
 
                         //perform other actions here...
                         if (!emailMessage.IsRead)
-                        {                        
+                        {
                             //item.Load();
                             //emailEntityId = ConvertEWSidToEntryID(service, item.Id.ToString(), ConfigurationManager.AppSettings["client_email"]);                        
 
@@ -247,20 +251,25 @@ namespace ICPBabySitter
 
                             //if (ExtractRegistrationLink(emailMessage) > 0) {
                             if (icpuser.IsFound())
-                            {                                
+                            {
                                 if (icpuser.Save2DB(objConn))
-                                { 
+                                {
                                     //mark the message as read
                                     emailMessage.IsRead = true;
                                     item.Update(ConflictResolutionMode.AutoResolve);
                                 }
-                            }                        
+                            }
                         }
+                        total += 1;
                     }
                 }
-                if (objConn.State == ConnectionState.Open)
-                    objConn.Close();
-                }
+                Console.WriteLine(DateTime.Now.ToString() + " INFO  " + total + " emails were processed so far.");
+                offset = pageSize;
+            } while (findResults.MoreAvailable);
+
+            if (objConn.State == ConnectionState.Open)
+                objConn.Close();
+
             return 0;
         }
 
