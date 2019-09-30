@@ -10,7 +10,8 @@
     <add key="debug_mode" value="Y" />
     <add key="num_of_email" value="30" />
     <add key="client_email" value="email@email.com" />
-    <add key="client_key" value="xxxxxxx" />
+    <add key="ews_user" value="username" />
+    <add key="ews_pwd" value="password" />
     <add key="ews_auto_discover" value="https://exchangeserver/EWS/Exchange.asmx" />
     <add key="ClientSettingsProvider.ServiceUri" value="" />
   </appSettings>
