@@ -64,27 +64,40 @@ namespace ICPBabySitter
                                     Console.WriteLine("Proxy is null; no proxy will be used");
                                 }
                 */
-                HttpWebResponse response = (HttpWebResponse)request.GetResponse();
-                using (System.IO.StreamReader reader = new System.IO.StreamReader(response.GetResponseStream()))
+                try
                 {
-                    string sPage = reader.ReadToEnd();
-                    // Process the response text if you need to...                                        
-                    object[] oPageText = { sPage };
+                    HttpWebResponse response = (HttpWebResponse)request.GetResponse();
+                    using (System.IO.StreamReader reader = new System.IO.StreamReader(response.GetResponseStream()))
+                    {
+                        string sPage = reader.ReadToEnd();
+                        // Process the response text if you need to...                                        
+                        object[] oPageText = { sPage };
 
-                    HTMLDocument doc = new HTMLDocument();
-                    IHTMLDocument2 doc2 = (IHTMLDocument2)doc;
-                    doc2.write(oPageText);
+                        HTMLDocument doc = new HTMLDocument();
+                        IHTMLDocument2 doc2 = (IHTMLDocument2)doc;
+                        doc2.write(oPageText);
 
-                    HTMLInputElement screenEle = (HTMLInputElement)doc.getElementById("b_register_screen_name");
-                    HTMLInputElement emailEle = (HTMLInputElement)doc.getElementById("b_register_email");
+                        HTMLInputElement screenEle = (HTMLInputElement)doc.getElementById("b_register_screen_name");
+                        HTMLInputElement emailEle = (HTMLInputElement)doc.getElementById("b_register_email");
 
-                    if (ConfigurationManager.AppSettings["debug_mode"] == "Y")
-                        Console.WriteLine(DateTime.Now.ToString() + " DEBUG " + screenEle.value + "," + emailEle.value + "," + link);
+                        if (screenEle is null || emailEle is null)
+                        {
+                            Console.WriteLine(DateTime.Now.ToString() + " INFO Fail to extract the UserId and Email from " + link);
+                            return false;
+                        }
+                        if (ConfigurationManager.AppSettings["debug_mode"] == "Y")
+                            Console.WriteLine(DateTime.Now.ToString() + " DEBUG " + screenEle.value + "," + emailEle.value + "," + link);
 
-                    m_userid = screenEle.value;
-                    m_email = emailEle.value;
-                    m_link = link;                                       
-                    return true;
+                        m_userid = screenEle.value;
+                        m_email = emailEle.value;
+                        m_link = link;
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(DateTime.Now.ToString() + " ERROR " + ex.Message);
+                    return false;
                 }
             }
             return false;
@@ -255,8 +268,8 @@ namespace ICPBabySitter
                                 if (icpuser.Save2DB(objConn))
                                 {
                                     //mark the message as read
-                                    emailMessage.IsRead = true;
-                                    item.Update(ConflictResolutionMode.AutoResolve);
+                                    //emailMessage.IsRead = true;
+                                    //item.Update(ConflictResolutionMode.AutoResolve);
                                 }
                             }
                         }
@@ -264,7 +277,7 @@ namespace ICPBabySitter
                     }
                 }
                 Console.WriteLine(DateTime.Now.ToString() + " INFO  " + total + " emails were processed so far.");
-                offset = pageSize;
+                offset += pageSize;
             } while (findResults.MoreAvailable);
 
             if (objConn.State == ConnectionState.Open)
@@ -292,8 +305,8 @@ namespace ICPBabySitter
 
         private static void PrintUsage()
         {
-            Console.WriteLine("Usage: Required either [-C]");
-            Console.WriteLine("  -C: Check fax in Inbox");
+            Console.WriteLine("Usage: Required either [-E]");
+            Console.WriteLine("  -E: Extract Links");
             //Console.WriteLine("  -S: Send fax in MAIL_DB");
         }
 
