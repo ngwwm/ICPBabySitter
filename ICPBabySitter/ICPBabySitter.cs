@@ -20,7 +20,7 @@ namespace ICPBabySitter
         private string m_email;
         private string m_link;
         private bool m_found;
-        private readonly string m_filtersubject = "been invited to join HA Innovation Collaboration Platform";
+        //private readonly string m_filtersubject = "been invited to join HA Innovation Collaboration Platform";
 
         //constructor
         public ICPUser(EmailMessage email)
@@ -38,9 +38,9 @@ namespace ICPBabySitter
             string body;
 
             if (ConfigurationManager.AppSettings["debug_mode"] == "Y")
-                Console.WriteLine(DateTime.Now.ToString() + " DEBUG  " + email.Subject.ToString());
+                Console.WriteLine(DateTime.Now.ToString() + " DEBUG Email Subject ==> " + email.Subject.ToString());
 
-            if (email.Subject.IndexOf(m_filtersubject) > 0)
+            //if (email.Subject.IndexOf(m_filtersubject) > 0)
             {
                 body = email.Body;                
 
@@ -86,7 +86,7 @@ namespace ICPBabySitter
                             return false;
                         }
                         if (ConfigurationManager.AppSettings["debug_mode"] == "Y")
-                            Console.WriteLine(DateTime.Now.ToString() + " DEBUG " + screenEle.value + "," + emailEle.value + "," + link);
+                            Console.WriteLine(DateTime.Now.ToString() + " DEBUG Extracted values ==> " + screenEle.value + "," + emailEle.value + "," + link);
 
                         m_userid = screenEle.value;
                         m_email = emailEle.value;
@@ -100,7 +100,7 @@ namespace ICPBabySitter
                     return false;
                 }
             }
-            return false;
+            //return false;
         }
 
         public bool Save2DB(SqlConnection objConn)
@@ -240,9 +240,15 @@ namespace ICPBabySitter
             //Retrieve first n emails items
             FindItemsResults<Item> findResults;
 
+            SearchFilter srchfiltercoll = new SearchFilter.SearchFilterCollection(LogicalOperator.And, 
+                new SearchFilter.IsEqualTo(EmailMessageSchema.IsRead, false), 
+                new SearchFilter.ContainsSubstring(ItemSchema.Subject, "been invited to join HA Innovation Collaboration Platform"));
+
+            //SearchFilter srchfilter = new SearchFilter.ContainsSubstring(ItemSchema.Subject, "been invited to join HA Innovation Collaboration Platform");
+
             do
             {
-                findResults = service.FindItems(WellKnownFolderName.Inbox, new ItemView(pageSize, offset));
+                findResults = service.FindItems(WellKnownFolderName.Inbox, srchfiltercoll, new ItemView(pageSize, offset));
 
                 //service.LoadPropertiesForItems(findResults.Items, PropertySet.FirstClassProperties);
                 foreach (Item item in findResults.Items)
