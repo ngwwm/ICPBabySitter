@@ -353,3 +353,5 @@ MigrationBackup/
 .ionide/
 
 ICPBabySitter/App.config
+ICPBabySitter/web.config
+ICPBabySitter/*.bak

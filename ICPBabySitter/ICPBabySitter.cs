@@ -20,7 +20,6 @@ namespace ICPBabySitter
         private string m_email;
         private string m_link;
         private bool m_found;
-        //private readonly string m_filtersubject = "been invited to join HA Innovation Collaboration Platform";
 
         //constructor
         public ICPUser(EmailMessage email)
@@ -82,7 +81,7 @@ namespace ICPBabySitter
 
                         if (screenEle is null || emailEle is null)
                         {
-                            Console.WriteLine(DateTime.Now.ToString() + " INFO Fail to extract the UserId and Email from " + link);
+                            Console.WriteLine(DateTime.Now.ToString() + " ERROR Fail to extract the UserId and Email from " + link);
                             return false;
                         }
                         if (ConfigurationManager.AppSettings["debug_mode"] == "Y")
@@ -136,6 +135,8 @@ namespace ICPBabySitter
     class ICPBabySitter
     {
         static ExchangeService service;
+        static bool DRY_RUN = true;
+        static string Action;
 
         static void Main(string[] args)
         {
@@ -147,29 +148,29 @@ namespace ICPBabySitter
 
             foreach (string arg in args)
             {
-                switch (arg.Substring(0, 2).ToUpper())
+                switch (arg.ToUpper())
                 {
-                    case "-E":
-                        // Check fax for receipt
-                        SetupEWS();
-                        ExtractLinks();
+                    case "-E":                        
+                        Action = "EXTRACT";
                         break;
-                    /*
-                    case "-S":
-                        // Send fax in MAIL_DB
-                        setupEWS();
-                        SendFax();
-                        break;
-                    */
-                    case "-?":
-                        // Print usage
-                        PrintUsage();
+                    case "-D":
+                        DRY_RUN = false;
                         break;
                     default:
-                        // Print usage
-                        PrintUsage();
+                        Action = "";
                         break;
                 }
+            }
+
+            switch (Action)
+            {
+                case "EXTRACT":
+                    SetupEWS();
+                    ExtractLinks();
+                    break;
+                default:
+                    PrintUsage();
+                    break;
             }
         }
 
@@ -271,11 +272,14 @@ namespace ICPBabySitter
                             //if (ExtractRegistrationLink(emailMessage) > 0) {
                             if (icpuser.IsFound())
                             {
-                                if (icpuser.Save2DB(objConn))
+                                if (!DRY_RUN)
                                 {
-                                    //mark the message as read
-                                    //emailMessage.IsRead = true;
-                                    //item.Update(ConflictResolutionMode.AutoResolve);
+                                    if (icpuser.Save2DB(objConn))
+                                    {
+                                        //mark the message as read
+                                        emailMessage.IsRead = true;
+                                        item.Update(ConflictResolutionMode.AutoResolve);
+                                    }
                                 }
                             }
                         }
@@ -311,9 +315,9 @@ namespace ICPBabySitter
 
         private static void PrintUsage()
         {
-            Console.WriteLine("Usage: Required either [-E]");
+            Console.WriteLine("Usage: Required either [-E] [-D]");
             Console.WriteLine("  -E: Extract Links");
-            //Console.WriteLine("  -S: Send fax in MAIL_DB");
+            Console.WriteLine("  -D: Create DB record and mark email as read");
         }
 
         //Create a certificate validation callback method
