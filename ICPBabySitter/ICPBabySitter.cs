@@ -46,7 +46,13 @@ namespace ICPBabySitter
                 int linkStart = body.LastIndexOf("https://");
                 int linkEnd = body.LastIndexOf("</a>");
 
+                if (linkEnd <= linkStart)
+                    return false;
+
                 string link = body.Substring(linkStart, linkEnd - linkStart);
+
+                if (link.IndexOf("ct/ct_login.php?") < 0)
+                    return false;
 
                 ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
                 HttpWebRequest request = (HttpWebRequest)WebRequest.Create(link);
@@ -137,6 +143,7 @@ namespace ICPBabySitter
         static ExchangeService service;
         static bool DRY_RUN = true;
         static string Action;
+        static string TargetEmailSubject;
 
         static void Main(string[] args)
         {
@@ -146,12 +153,17 @@ namespace ICPBabySitter
                 return;
             }
 
-            foreach (string arg in args)
+            //foreach (string arg in args)
+            for (int i=0; i<args.Length; i++)
             {
-                switch (arg.ToUpper())
+                switch (args[i].ToUpper())
                 {
                     case "-E":                        
                         Action = "EXTRACT";
+                        break;
+                    case "-S":
+                        if (i+1<args.Length)
+                            TargetEmailSubject = args[++i];
                         break;
                     case "-D":
                         DRY_RUN = false;
@@ -240,10 +252,15 @@ namespace ICPBabySitter
 
             //Retrieve first n emails items
             FindItemsResults<Item> findResults;
+            SearchFilter srchfiltercoll;
 
-            SearchFilter srchfiltercoll = new SearchFilter.SearchFilterCollection(LogicalOperator.And, 
-                new SearchFilter.IsEqualTo(EmailMessageSchema.IsRead, false), 
-                new SearchFilter.ContainsSubstring(ItemSchema.Subject, "been invited to join HA Innovation Collaboration Platform"));
+            if (TargetEmailSubject is null || TargetEmailSubject == "") 
+                srchfiltercoll = new SearchFilter.SearchFilterCollection(LogicalOperator.And, 
+                    new SearchFilter.IsEqualTo(EmailMessageSchema.IsRead, false));
+            else
+                srchfiltercoll = new SearchFilter.SearchFilterCollection(LogicalOperator.And,
+                    new SearchFilter.IsEqualTo(EmailMessageSchema.IsRead, false),
+                    new SearchFilter.ContainsSubstring(ItemSchema.Subject, TargetEmailSubject));
 
             //SearchFilter srchfilter = new SearchFilter.ContainsSubstring(ItemSchema.Subject, "been invited to join HA Innovation Collaboration Platform");
 
@@ -315,9 +332,10 @@ namespace ICPBabySitter
 
         private static void PrintUsage()
         {
-            Console.WriteLine("Usage: Required either [-E] [-D]");
+            Console.WriteLine("Usage: [-E] [-D] [-S \"Email Subject\"]");
             Console.WriteLine("  -E: Extract Links");
             Console.WriteLine("  -D: Create DB record and mark email as read");
+            Console.WriteLine("  -S: Filter email by subject");
         }
 
         //Create a certificate validation callback method
