@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Configuration;
 using System.Data;
 using System.Data.SqlClient;
+using System.DirectoryServices.Protocols;
 using System.Text;
 using System.Threading.Tasks;
 using System.Net;
@@ -11,14 +12,16 @@ using System.Security.Cryptography.X509Certificates;
 using Microsoft.Exchange.WebServices.Data;
 using mshtml;
 using System.Security;
+using System.Threading;
 
 namespace ICPBabySitter
 {
     class ICPUser
     {
-        private string m_userid;
-        private string m_email;
-        private string m_link;
+        private string m_userid;    /* domain id */
+        private string m_screen;    /* screen name */
+        private string m_email;     /* internet email */
+        private string m_link;      /* registration link */
         private bool m_found;
 
         //constructor
@@ -49,6 +52,8 @@ namespace ICPBabySitter
                 if (linkEnd <= linkStart)
                     return false;
 
+                /* sample link => https://hatesting.brightidea.com/ct/ct_login.php?br=40F88B5D */
+
                 string link = body.Substring(linkStart, linkEnd - linkStart);
 
                 if (link.IndexOf("ct/ct_login.php?") < 0)
@@ -72,6 +77,7 @@ namespace ICPBabySitter
                 try
                 {
                     HttpWebResponse response = (HttpWebResponse)request.GetResponse();
+
                     using (System.IO.StreamReader reader = new System.IO.StreamReader(response.GetResponseStream()))
                     {
                         string sPage = reader.ReadToEnd();
@@ -81,9 +87,11 @@ namespace ICPBabySitter
                         HTMLDocument doc = new HTMLDocument();
                         IHTMLDocument2 doc2 = (IHTMLDocument2)doc;
                         doc2.write(oPageText);
-
+                        
                         HTMLInputElement screenEle = (HTMLInputElement)doc.getElementById("b_register_screen_name");
                         HTMLInputElement emailEle = (HTMLInputElement)doc.getElementById("b_register_email");
+
+                        response.Close();
 
                         if (screenEle is null || emailEle is null)
                         {
@@ -93,7 +101,7 @@ namespace ICPBabySitter
                         if (ConfigurationManager.AppSettings["debug_mode"] == "Y")
                             Console.WriteLine(DateTime.Now.ToString() + " DEBUG Extracted values ==> " + screenEle.value + "," + emailEle.value + "," + link);
 
-                        m_userid = screenEle.value;
+                        m_screen = screenEle.value;
                         m_email = emailEle.value;
                         m_link = link;
                         return true;
@@ -108,23 +116,42 @@ namespace ICPBabySitter
             //return false;
         }
 
+        public void ResolveDomainID(LdapConnection objLdapConn)
+        {
+            
+
+            // retrieve user sAMAccountName by mail
+            string searchFilter = String.Format("(&(objectClass=user)(mail={0}))", m_email);
+            SearchResponse response = objLdapConn.SendRequest(new SearchRequest("DC=corpdev,DC=hadev,DC=org,DC=hk", searchFilter, System.DirectoryServices.Protocols.SearchScope.Subtree, null)) as SearchResponse;
+
+                foreach (SearchResultEntry entry in response.Entries)
+                {
+                    if (entry.Attributes.Contains("sAMAccountName") && entry.Attributes["sAMAccountName"][0].ToString() != String.Empty)
+                        m_userid=entry.Attributes["sAMAccountName"][0].ToString();
+                }
+                if (ConfigurationManager.AppSettings["debug_mode"] == "Y")
+                    Console.WriteLine(DateTime.Now.ToString() + " DEBUG Resolved Domain ID ==> " + m_userid);
+
+        }
+
         public bool Save2DB(SqlConnection objConn)
         {
             try
             {
-                SqlCommand objCommand = new SqlCommand("create_user", objConn);
+                SqlCommand objCommand = new SqlCommand("cr_registration_link_staging", objConn);
                 objCommand.CommandType = CommandType.StoredProcedure;
                 objCommand.CommandTimeout = 60;
 
-                objCommand.Parameters.Add("@userid", SqlDbType.VarChar, 20).Value = m_userid;
+                objCommand.Parameters.Add("@screen_name", SqlDbType.VarChar, 20).Value = m_screen;
                 objCommand.Parameters.Add("@email", SqlDbType.VarChar, 50).Value = m_email;
-                objCommand.Parameters.Add("@link", SqlDbType.VarChar, 150).Value = m_link;
+                objCommand.Parameters.Add("@domain_account", SqlDbType.VarChar, 20).Value = m_userid;
+                objCommand.Parameters.Add("@registration_link", SqlDbType.VarChar, 150).Value = m_link;
 
                 //inboxFolder.Items[i].GetInspector.Close(Outlook.OlInspectorClose.olDiscard);
 
                 if ((int)objCommand.ExecuteScalar() != 1)
                 {
-                    Console.WriteLine(DateTime.Now.ToString() + " ERROR Error saving record: " + m_userid + ".");
+                    Console.WriteLine(DateTime.Now.ToString() + " ERROR Error saving record: " + m_screen + ".");
                     return false;
                 }
             }
@@ -142,11 +169,13 @@ namespace ICPBabySitter
     {
         static ExchangeService service;
         static bool DRY_RUN = true;
+        static bool UnRead = true;          /* only process unread emails */
         static string Action;
-        static string TargetEmailSubject;
+        static string TargetEmailSubject;   /* only process those email subject */
 
         static void Main(string[] args)
         {
+                        
             if (args.Length == 0)
             {
                 PrintUsage();
@@ -164,6 +193,9 @@ namespace ICPBabySitter
                     case "-S":
                         if (i+1<args.Length)
                             TargetEmailSubject = args[++i];
+                        break;
+                    case "-A":
+                        UnRead = false;
                         break;
                     case "-D":
                         DRY_RUN = false;
@@ -216,7 +248,7 @@ namespace ICPBabySitter
             //RedirectionUrlValidationCallback to the AutodiscoverUrl method.
             service.AutodiscoverUrl(ConfigurationManager.AppSettings["client_email"], RedirectionUrlValidationCallback);
 
-            //service.Url = new Uri("https://mailcorphc02.corp.ha.org.hk/EWS/Exchange.asmx");
+            //service.Url = new Uri("https://mailcorphc02.corp.ha.org.hk/EWS/Exchange.asmx");            
             //service.Url = new Uri(ConfigurationManager.AppSettings["ews_auto_discover"]);
             if (ConfigurationManager.AppSettings["debug_mode"] == "Y")
                 Console.WriteLine(service.Url);
@@ -244,24 +276,51 @@ namespace ICPBabySitter
                 Console.WriteLine(DateTime.Now.ToString() + " ERROR " + ex.Message);
                 return -1;
             }
+
+            //Open Ldap connection
+            //LdapConnection connection = new LdapConnection(new LdapDirectoryIdentifier("ldapscorpdev.server.ha.org.hk"));
+            LdapConnection objLdapConn = new LdapConnection(ConfigurationManager.AppSettings["ldap_server"]);
+
+            // attempt to connect
+            try {
+                if (ConfigurationManager.AppSettings["ldap_domain"] == "corp")
+                    objLdapConn.Bind(new NetworkCredential(ConfigurationManager.AppSettings["ews_user"], ConfigurationManager.AppSettings["ews_pwd"], "CORP"));
+                else
+                    objLdapConn.Bind(new NetworkCredential(ConfigurationManager.AppSettings["ldap_username"], ConfigurationManager.AppSettings["ldap_password"]));
+            }
+            catch (Exception ex)
+            {
+                //Trace.WriteLine(exception.ToString());
+                Console.WriteLine(DateTime.Now.ToString() + " ERROR " + ex.Message);
+                return -1;
+            }
+
             //Console.WriteLine("Limited to process  " + findResults.Items.Count.ToString() + " email(s).");
-            pageSize = Convert.ToInt32(ConfigurationManager.AppSettings["num_of_email"]);
+            pageSize = Convert.ToInt32(ConfigurationManager.AppSettings["num_of_email_pagesize"]);
 
             //Bind to Inbox folder
             Folder inboxfolder = Folder.Bind(service, WellKnownFolderName.Inbox);
 
             //Retrieve first n emails items
             FindItemsResults<Item> findResults;
-            SearchFilter srchfiltercoll;
+            SearchFilter srchfiltercoll = null;
 
-            if (TargetEmailSubject is null || TargetEmailSubject == "") 
-                srchfiltercoll = new SearchFilter.SearchFilterCollection(LogicalOperator.And, 
-                    new SearchFilter.IsEqualTo(EmailMessageSchema.IsRead, false));
+            if (!(TargetEmailSubject is null) && TargetEmailSubject != "")
+            {
+                if (UnRead)
+                    srchfiltercoll = new SearchFilter.SearchFilterCollection(LogicalOperator.And,
+                        new SearchFilter.IsEqualTo(EmailMessageSchema.IsRead, false),
+                        new SearchFilter.ContainsSubstring(ItemSchema.Subject, TargetEmailSubject));
+                else
+                    srchfiltercoll = new SearchFilter.SearchFilterCollection(LogicalOperator.And,
+                        new SearchFilter.ContainsSubstring(ItemSchema.Subject, TargetEmailSubject));
+            }
             else
-                srchfiltercoll = new SearchFilter.SearchFilterCollection(LogicalOperator.And,
-                    new SearchFilter.IsEqualTo(EmailMessageSchema.IsRead, false),
-                    new SearchFilter.ContainsSubstring(ItemSchema.Subject, TargetEmailSubject));
-
+            {
+                if (UnRead)
+                    srchfiltercoll = new SearchFilter.SearchFilterCollection(LogicalOperator.And,
+                        new SearchFilter.IsEqualTo(EmailMessageSchema.IsRead, false));
+            }
             //SearchFilter srchfilter = new SearchFilter.ContainsSubstring(ItemSchema.Subject, "been invited to join HA Innovation Collaboration Platform");
 
             do
@@ -277,7 +336,7 @@ namespace ICPBabySitter
                         //Console.WriteLine("IsRead: " + emailMessage.IsRead);
 
                         //perform other actions here...
-                        if (!emailMessage.IsRead)
+                        //if (!emailMessage.IsRead)
                         {
                             //item.Load();
                             //emailEntityId = ConvertEWSidToEntryID(service, item.Id.ToString(), ConfigurationManager.AppSettings["client_email"]);                        
@@ -289,8 +348,11 @@ namespace ICPBabySitter
                             //if (ExtractRegistrationLink(emailMessage) > 0) {
                             if (icpuser.IsFound())
                             {
+
+                                icpuser.ResolveDomainID(objLdapConn);
                                 if (!DRY_RUN)
                                 {
+
                                     if (icpuser.Save2DB(objConn))
                                     {
                                         //mark the message as read
@@ -310,6 +372,8 @@ namespace ICPBabySitter
             if (objConn.State == ConnectionState.Open)
                 objConn.Close();
 
+            if(objLdapConn != null)
+                objLdapConn.Dispose();
             return 0;
         }
 
@@ -332,10 +396,11 @@ namespace ICPBabySitter
 
         private static void PrintUsage()
         {
-            Console.WriteLine("Usage: [-E] [-D] [-S \"Email Subject\"]");
-            Console.WriteLine("  -E: Extract Links");
+            Console.WriteLine("Usage: [-E] [-D] [-A] [-S \"Email Subject\"]");
+            Console.WriteLine("  -E: Extract registration links");
             Console.WriteLine("  -D: Create DB record and mark email as read");
-            Console.WriteLine("  -S: Filter email by subject");
+            Console.WriteLine("  -A: Process both read and unread emails");
+            Console.WriteLine("  -S: Specify the email subject to filter");
         }
 
         //Create a certificate validation callback method
